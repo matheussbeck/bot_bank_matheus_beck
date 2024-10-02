@@ -11,309 +11,309 @@ import logging
 import os
 from dotenv import load_dotenv
 
-# Carrega as variáveis de ambiente do arquivo .env
+
 load_dotenv()
 
-# Configuração do logging
+
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# Configuração do bot
+
 TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 bot = TeleBot(TOKEN)
 
-# Configuração do MongoDB
+
 MONGO_URI = os.getenv('MONGO_URI')
 DB_NAME = os.getenv('DB_NAME')
 
-# Variáveis globais para controlar o estado da conexão com o banco de dados
-db_disponivel = False
-usuarios = None
-auditoria = None
 
-def conectar_mongodb():
-    global db_disponivel, usuarios, auditoria
+db_available = False
+users = None
+audit = None
+
+def connect_mongodb():
+    global db_available, users, audit
     try:
         client = MongoClient(MONGO_URI)
         client.admin.command('ismaster')
-        logger.info("Conexão bem-sucedida com o MongoDB local")
+        logger.info("Successful connection to local MongoDB")
         db = client[DB_NAME]
         
-        if 'usuarios' not in db.list_collection_names():
-            db.create_collection('usuarios')
-            logger.info("Coleção 'usuarios' criada com sucesso.")
-        usuarios = db['usuarios']
+        if 'users' not in db.list_collection_names():
+            db.create_collection('users')
+            logger.info("Collection 'users' created successfully.")
+        users = db['users']
         
-        if 'auditoria' not in db.list_collection_names():
-            db.create_collection('auditoria')
-            logger.info("Coleção 'auditoria' criada com sucesso.")
-        auditoria = db['auditoria']
+        if 'audit' not in db.list_collection_names():
+            db.create_collection('audit')
+            logger.info("Collection 'audit' created successfully.")
+        audit = db['audit']
         
-        db_disponivel = True
+        db_available = True
         return client, db
     except ConnectionFailure:
-        logger.error("Falha ao conectar ao MongoDB local. Verifique se o serviço MongoDB está rodando.")
-        db_disponivel = False
+        logger.error("Failed to connect to local MongoDB. Check if the MongoDB service is running.")
+        db_available = False
         return None, None
 
-# Estabelece a conexão com o MongoDB
-client, db = conectar_mongodb()
 
-def registrar_auditoria(chat_id, tipo_operacao, valor, saldo_anterior, saldo_atual):
-    if not db_disponivel:
-        logger.error("Falha ao registrar auditoria: banco de dados indisponível")
+client, db = connect_mongodb()
+
+def register_audit(chat_id, operation_type, amount, previous_balance, current_balance):
+    if not db_available:
+        logger.error("Failed to register audit: database unavailable")
         return
     
-    registro = {
+    record = {
         'chat_id': chat_id,
-        'tipo_operacao': tipo_operacao,
-        'valor': valor,
-        'saldo_anterior': saldo_anterior,
-        'saldo_atual': saldo_atual,
+        'operation_type': operation_type,
+        'amount': amount,
+        'previous_balance': previous_balance,
+        'current_balance': current_balance,
         'timestamp': datetime.now()
     }
     
     try:
-        auditoria.insert_one(registro)
-        logger.info(f"Registro de auditoria criado: {registro}")
+        audit.insert_one(record)
+        logger.info(f"Audit record created: {record}")
     except Exception as e:
-        logger.error(f"Erro ao criar registro de auditoria: {e}")
+        logger.error(f"Error creating audit record: {e}")
 
-def gerar_markup(botoes):
+def generate_markup(buttons):
     markup = InlineKeyboardMarkup()
     markup.row_width = 2
-    for texto, callback_data in botoes:
-        markup.add(InlineKeyboardButton(texto, callback_data=callback_data))
+    for text, callback_data in buttons:
+        markup.add(InlineKeyboardButton(text, callback_data=callback_data))
     return markup
 
-def gerar_markup_inicial():
-    botoes = [
-        ("Verificar Saldo", "verificar_saldo"),
-        ("Depositar", "depositar"),
-        ("Sacar", "sacar"),
-        ("Histórico", "historico")
+def generate_initial_markup():
+    buttons = [
+        ("Check Balance", "check_balance"),
+        ("Deposit", "deposit"),
+        ("Withdraw", "withdraw"),
+        ("History", "history")
     ]
-    return gerar_markup(botoes)
+    return generate_markup(buttons)
 
 @bot.message_handler(commands=['start'])
 def handle_start(message):
-    if not db_disponivel:
-        bot.reply_to(message, "Ops, nosso banco de dados apresentou instabilidades. Por favor, entre em contato com o suporte.")
+    if not db_available:
+        bot.reply_to(message, "Oops, our database is experiencing instability. Please contact support.")
         return
 
     chat_id = message.chat.id
-    user = usuarios.find_one({'_id': chat_id})
+    user = users.find_one({'_id': chat_id})
     if not user:
-        usuarios.insert_one({
+        users.insert_one({
             '_id': chat_id,
-            'saldo': 0,
-            'ultima_transacao': None
+            'balance': 0,
+            'last_transaction': None
         })
-        logger.info(f"Novo usuário registrado: {chat_id}")
-    bot.reply_to(message, "Bem-vindo ao Bot Bancário! O que você gostaria de fazer?", reply_markup=gerar_markup_inicial())
+        logger.info(f"New user registered: {chat_id}")
+    bot.reply_to(message, "Welcome to the Bank Bot! What would you like to do?", reply_markup=generate_initial_markup())
 
 @bot.callback_query_handler(func=lambda call: True)
 def callback_query(call):
-    if not db_disponivel:
-        bot.answer_callback_query(call.id, "Desculpe, o serviço está temporariamente indisponível. Por favor, tente novamente mais tarde.")
+    if not db_available:
+        bot.answer_callback_query(call.id, "Sorry, the service is temporarily unavailable. Please try again later.")
         return
 
     chat_id = call.message.chat.id
-    if call.data == "verificar_saldo":
-        verificar_saldo(call.message)
-    elif call.data == "depositar":
-        iniciar_deposito(call.message)
-    elif call.data == "sacar":
-        iniciar_saque(call.message)
-    elif call.data.startswith("confirmar_deposito_"):
-        valor = float(call.data.split("_")[2])
-        confirmar_deposito(call.message, valor)
-    elif call.data.startswith("confirmar_saque_"):
-        valor = float(call.data.split("_")[2])
-        confirmar_saque(call.message, valor)
-    elif call.data == "cancelar_operacao":
-        bot.send_message(chat_id, "Operação cancelada.", reply_markup=gerar_markup_inicial())
-        logger.info(f"Operação cancelada pelo usuário: {chat_id}")
-    elif call.data == "historico":
-        mostrar_historico(call.message)
+    if call.data == "check_balance":
+        check_balance(call.message)
+    elif call.data == "deposit":
+        start_deposit(call.message)
+    elif call.data == "withdraw":
+        start_withdrawal(call.message)
+    elif call.data.startswith("confirm_deposit_"):
+        amount = float(call.data.split("_")[2])
+        confirm_deposit(call.message, amount)
+    elif call.data.startswith("confirm_withdraw_"):
+        amount = float(call.data.split("_")[2])
+        confirm_withdrawal(call.message, amount)
+    elif call.data == "cancel_operation":
+        bot.send_message(chat_id, "Operation cancelled.", reply_markup=generate_initial_markup())
+        logger.info(f"Operation cancelled by user: {chat_id}")
+    elif call.data == "history":
+        show_history(call.message)
 
-def verificar_saldo(message):
-    if not db_disponivel:
-        bot.send_message(message.chat.id, "Ops, nosso banco de dados apresentou instabilidades. Por favor, entre em contato com o suporte.")
+def check_balance(message):
+    if not db_available:
+        bot.send_message(message.chat.id, "Oops, our database is experiencing instability. Please contact support.")
         return
 
     chat_id = message.chat.id
-    user = usuarios.find_one({'_id': chat_id})
+    user = users.find_one({'_id': chat_id})
     if user:
-        saldo = user['saldo']
-        ultima_transacao = user['ultima_transacao']
-        if ultima_transacao:
-            resposta = f"Seu saldo atual é: R${saldo:.2f}\n\nÚltima transação: {ultima_transacao['tipo']} de R${ultima_transacao['valor']:.2f} em {ultima_transacao['data']}"
+        balance = user['balance']
+        last_transaction = user['last_transaction']
+        if last_transaction:
+            response = f"Your current balance is: ${balance:.2f}\n\nLast transaction: {last_transaction['type']} of ${last_transaction['amount']:.2f} on {last_transaction['date']}"
         else:
-            resposta = f"Seu saldo atual é: R${saldo:.2f}\n\nVocê ainda não realizou nenhuma transação."
+            response = f"Your current balance is: ${balance:.2f}\n\nYou haven't made any transactions yet."
     else:
-        resposta = "Desculpe, não foi possível encontrar suas informações. Por favor, tente novamente mais tarde."
+        response = "Sorry, we couldn't find your information. Please try again later."
     
-    bot.send_message(chat_id, resposta, reply_markup=gerar_markup_inicial())
-    logger.info(f"Saldo verificado para o usuário: {chat_id}")
+    bot.send_message(chat_id, response, reply_markup=generate_initial_markup())
+    logger.info(f"Balance checked for user: {chat_id}")
 
-def iniciar_deposito(message):
-    if not db_disponivel:
-        bot.send_message(message.chat.id, "Ops, nosso banco de dados apresentou instabilidades. Por favor, entre em contato com o suporte.")
+def start_deposit(message):
+    if not db_available:
+        bot.send_message(message.chat.id, "Oops, our database is experiencing instability. Please contact support.")
         return
 
-    bot.send_message(message.chat.id, "Por favor, digite o valor que deseja depositar:")
-    bot.register_next_step_handler(message, processar_valor_deposito)
+    bot.send_message(message.chat.id, "Please enter the amount you want to deposit:")
+    bot.register_next_step_handler(message, process_deposit_amount)
 
-def processar_valor_deposito(message):
+def process_deposit_amount(message):
     try:
-        valor = float(message.text)
-        if valor <= 0:
-            raise ValueError("O valor deve ser maior que zero.")
+        amount = float(message.text)
+        if amount <= 0:
+            raise ValueError("The amount must be greater than zero.")
         
         chat_id = message.chat.id
-        user = usuarios.find_one({'_id': chat_id})
-        saldo_atual = user['saldo']
+        user = users.find_one({'_id': chat_id})
+        current_balance = user['balance']
         
-        botoes = [
-            ("Confirmar", f"confirmar_deposito_{valor}"),
-            ("Cancelar", "cancelar_operacao")
+        buttons = [
+            ("Confirm", f"confirm_deposit_{amount}"),
+            ("Cancel", "cancel_operation")
         ]
-        markup = gerar_markup(botoes)
-        bot.send_message(chat_id, f"Você deseja depositar R${valor:.2f}. Seu saldo atual é R${saldo_atual:.2f}. Confirma?", reply_markup=markup)
+        markup = generate_markup(buttons)
+        bot.send_message(chat_id, f"You want to deposit ${amount:.2f}. Your current balance is ${current_balance:.2f}. Confirm?", reply_markup=markup)
     except ValueError as e:
-        bot.send_message(message.chat.id, f"Valor inválido. Por favor, tente novamente.")
-        bot.register_next_step_handler(message, processar_valor_deposito)
+        bot.send_message(message.chat.id, f"Invalid amount. Please try again.")
+        bot.register_next_step_handler(message, process_deposit_amount)
 
-def confirmar_deposito(message, valor):
+def confirm_deposit(message, amount):
     chat_id = message.chat.id
     timestamp = datetime.now()
     
-    user = usuarios.find_one({'_id': chat_id})
-    saldo_anterior = user['saldo']
+    user = users.find_one({'_id': chat_id})
+    previous_balance = user['balance']
     
-    resultado = usuarios.update_one(
+    result = users.update_one(
         {'_id': chat_id},
         {
-            '$inc': {'saldo': valor},
+            '$inc': {'balance': amount},
             '$set': {
-                'ultima_transacao': {
-                    'tipo': 'depósito',
-                    'valor': valor,
-                    'data': timestamp.strftime("%d/%m/%Y %H:%M:%S")
+                'last_transaction': {
+                    'type': 'deposit',
+                    'amount': amount,
+                    'date': timestamp.strftime("%d/%m/%Y %H:%M:%S")
                 }
             }
         }
     )
     
-    if resultado.modified_count > 0:
-        saldo_atualizado = saldo_anterior + valor
-        resposta = (f"Depósito de R${valor:.2f} realizado com sucesso!\n"
-                    f"Saldo anterior: R${saldo_anterior:.2f}\n"
-                    f"Saldo atualizado: R${saldo_atualizado:.2f}\n"
-                    f"Data e hora da transação: {timestamp.strftime('%d/%m/%Y %H:%M:%S')}")
-        bot.send_message(chat_id, resposta, reply_markup=gerar_markup_inicial())
-        logger.info(f"Depósito realizado: Usuário {chat_id}, Valor R${valor:.2f}, Saldo anterior R${saldo_anterior:.2f}, Novo saldo R${saldo_atualizado:.2f}")
+    if result.modified_count > 0:
+        updated_balance = previous_balance + amount
+        response = (f"Deposit of ${amount:.2f} successful!\n"
+                    f"Previous balance: ${previous_balance:.2f}\n"
+                    f"Updated balance: ${updated_balance:.2f}\n"
+                    f"Transaction date and time: {timestamp.strftime('%d/%m/%Y %H:%M:%S')}")
+        bot.send_message(chat_id, response, reply_markup=generate_initial_markup())
+        logger.info(f"Deposit made: User {chat_id}, Amount ${amount:.2f}, Previous balance ${previous_balance:.2f}, New balance ${updated_balance:.2f}")
         
-        # Registrar na auditoria
-        registrar_auditoria(chat_id, "depósito", valor, saldo_anterior, saldo_atualizado)
+        # Register in audit
+        register_audit(chat_id, "deposit", amount, previous_balance, updated_balance)
     else:
-        bot.send_message(chat_id, "Ocorreu um erro ao processar o depósito. Por favor, tente novamente.", reply_markup=gerar_markup_inicial())
-        logger.error(f"Falha ao processar depósito: Usuário {chat_id}, Valor R${valor:.2f}")
+        bot.send_message(chat_id, "An error occurred while processing the deposit. Please try again.", reply_markup=generate_initial_markup())
+        logger.error(f"Failed to process deposit: User {chat_id}, Amount ${amount:.2f}")
 
-def iniciar_saque(message):
-    if not db_disponivel:
-        bot.send_message(message.chat.id, "Ops, nosso banco de dados apresentou instabilidades. Por favor, entre em contato com o suporte.")
+def start_withdrawal(message):
+    if not db_available:
+        bot.send_message(message.chat.id, "Oops, our database is experiencing instability. Please contact support.")
         return
 
     chat_id = message.chat.id
-    user = usuarios.find_one({'_id': chat_id})
-    saldo_atual = user['saldo']
+    user = users.find_one({'_id': chat_id})
+    current_balance = user['balance']
 
-    bot.send_message(chat_id, f"Seu saldo atual é R${saldo_atual:.2f}. Por favor, digite o valor que deseja sacar:")
-    bot.register_next_step_handler(message, processar_valor_saque)
+    bot.send_message(chat_id, f"Your current balance is ${current_balance:.2f}. Please enter the amount you want to withdraw:")
+    bot.register_next_step_handler(message, process_withdrawal_amount)
 
-def processar_valor_saque(message):
+def process_withdrawal_amount(message):
     try:
-        valor = float(message.text)
-        if valor <= 0:
-            raise ValueError("O valor deve ser maior que zero.")
+        amount = float(message.text)
+        if amount <= 0:
+            raise ValueError("The amount must be greater than zero.")
         
         chat_id = message.chat.id
-        user = usuarios.find_one({'_id': chat_id})
-        saldo_atual = user['saldo']
+        user = users.find_one({'_id': chat_id})
+        current_balance = user['balance']
         
-        if saldo_atual < valor:
-            bot.send_message(chat_id, f"Saldo insuficiente. Seu saldo atual é R${saldo_atual:.2f}. Por favor, digite um novo valor para saque:")
-            bot.register_next_step_handler(message, processar_valor_saque)
+        if current_balance < amount:
+            bot.send_message(chat_id, f"Insufficient balance. Your current balance is ${current_balance:.2f}. Please enter a new withdrawal amount:")
+            bot.register_next_step_handler(message, process_withdrawal_amount)
             return
         
-        botoes = [
-            ("Confirmar", f"confirmar_saque_{valor}"),
-            ("Cancelar", "cancelar_operacao")
+        buttons = [
+            ("Confirm", f"confirm_withdraw_{amount}"),
+            ("Cancel", "cancel_operation")
         ]
-        markup = gerar_markup(botoes)
-        bot.send_message(chat_id, f"Você deseja sacar R${valor:.2f}. Seu saldo atual é R${saldo_atual:.2f}. Após o saque, seu saldo será R${saldo_atual - valor:.2f}. Confirma?", reply_markup=markup)
+        markup = generate_markup(buttons)
+        bot.send_message(chat_id, f"You want to withdraw ${amount:.2f}. Your current balance is ${current_balance:.2f}. After withdrawal, your balance will be ${current_balance - amount:.2f}. Confirm?", reply_markup=markup)
     except ValueError as e:
-        bot.send_message(message.chat.id, f"Valor inválido. Por favor, tente novamente.")
-        bot.register_next_step_handler(message, processar_valor_saque)
+        bot.send_message(message.chat.id, f"Invalid amount. Please try again.")
+        bot.register_next_step_handler(message, process_withdrawal_amount)
 
-def confirmar_saque(message, valor):
+def confirm_withdrawal(message, amount):
     chat_id = message.chat.id
     timestamp = datetime.now()
     
-    user = usuarios.find_one({'_id': chat_id})
-    saldo_anterior = user['saldo']
+    user = users.find_one({'_id': chat_id})
+    previous_balance = user['balance']
     
-    if saldo_anterior < valor:
-        bot.send_message(chat_id, f"Saldo insuficiente para realizar o saque. Seu saldo atual é R${saldo_anterior:.2f}.", reply_markup=gerar_markup_inicial())
-        logger.warning(f"Tentativa de saque com saldo insuficiente: Usuário {chat_id}, Valor R${valor:.2f}, Saldo atual R${saldo_anterior:.2f}")
+    if previous_balance < amount:
+        bot.send_message(chat_id, f"Insufficient balance for withdrawal. Your current balance is ${previous_balance:.2f}.", reply_markup=generate_initial_markup())
+        logger.warning(f"Withdrawal attempt with insufficient balance: User {chat_id}, Amount ${amount:.2f}, Current balance ${previous_balance:.2f}")
         return
     
-    resultado = usuarios.update_one(
+    result = users.update_one(
         {'_id': chat_id},
         {
-            '$inc': {'saldo': -valor},
+            '$inc': {'balance': -amount},
             '$set': {
-                'ultima_transacao': {
-                    'tipo': 'saque',
-                    'valor': valor,
-                    'data': timestamp.strftime("%d/%m/%Y %H:%M:%S")
+                'last_transaction': {
+                    'type': 'withdrawal',
+                    'amount': amount,
+                    'date': timestamp.strftime("%d/%m/%Y %H:%M:%S")
                 }
             }
         }
     )
     
-    if resultado.modified_count > 0:
-        saldo_atualizado = saldo_anterior - valor
-        resposta = (f"Saque de R${valor:.2f} realizado com sucesso!\n"
-                    f"Saldo anterior: R${saldo_anterior:.2f}\n"
-                    f"Saldo atualizado: R${saldo_atualizado:.2f}\n"
-                    f"Data e hora da transação: {timestamp.strftime('%d/%m/%Y %H:%M:%S')}")
-        bot.send_message(chat_id, resposta, reply_markup=gerar_markup_inicial())
-        logger.info(f"Saque realizado: Usuário {chat_id}, Valor R${valor:.2f}, Saldo anterior R${saldo_anterior:.2f}, Novo saldo R${saldo_atualizado:.2f}")
+    if result.modified_count > 0:
+        updated_balance = previous_balance - amount
+        response = (f"Withdrawal of ${amount:.2f} successful!\n"
+                    f"Previous balance: ${previous_balance:.2f}\n"
+                    f"Updated balance: ${updated_balance:.2f}\n"
+                    f"Transaction date and time: {timestamp.strftime('%d/%m/%Y %H:%M:%S')}")
+        bot.send_message(chat_id, response, reply_markup=generate_initial_markup())
+        logger.info(f"Withdrawal made: User {chat_id}, Amount ${amount:.2f}, Previous balance ${previous_balance:.2f}, New balance ${updated_balance:.2f}")
         
-        # Registrar na auditoria
-        registrar_auditoria(chat_id, "saque", valor, saldo_anterior, saldo_atualizado)
+        # Register in audit
+        register_audit(chat_id, "withdrawal", amount, previous_balance, updated_balance)
     else:
-        bot.send_message(chat_id, "Ocorreu um erro ao processar o saque. Por favor, tente novamente.", reply_markup=gerar_markup_inicial())
-        logger.error(f"Falha ao processar saque: Usuário {chat_id}, Valor R${valor:.2f}")
+        bot.send_message(chat_id, "An error occurred while processing the withdrawal. Please try again.", reply_markup=generate_initial_markup())
+        logger.error(f"Failed to process withdrawal: User {chat_id}, Amount ${amount:.2f}")
 
-def mostrar_historico(message):
+def show_history(message):
     chat_id = message.chat.id
-    historico = auditoria.find({'chat_id': chat_id}).sort('timestamp', -1).limit(10)  # Últimas 10 transações
+    history = audit.find({'chat_id': chat_id}).sort('timestamp', -1).limit(10)  # Last 10 transactions
     
-    if auditoria.count_documents({'chat_id': chat_id}) == 0:
-        bot.send_message(chat_id, "Você ainda não possui histórico de transações.", reply_markup=gerar_markup_inicial())
+    if audit.count_documents({'chat_id': chat_id}) == 0:
+        bot.send_message(chat_id, "You don't have any transaction history yet.", reply_markup=generate_initial_markup())
         return
     
-    resposta = "Histórico de transações (últimas 10):\n\n"
-    for transacao in historico:
-        resposta += f"{transacao['timestamp'].strftime('%d/%m/%Y %H:%M:%S')} - {transacao['tipo_operacao'].capitalize()} de R${transacao['valor']:.2f}\n"
-        resposta += f"Saldo anterior: R${transacao['saldo_anterior']:.2f} | Saldo atual: R${transacao['saldo_atual']:.2f}\n\n"
+    response = "Transaction history (last 10):\n\n"
+    for transaction in history:
+        response += f"{transaction['timestamp'].strftime('%d/%m/%Y %H:%M:%S')} - {transaction['operation_type'].capitalize()} of ${transaction['amount']:.2f}\n"
+        response += f"Previous balance: ${transaction['previous_balance']:.2f} | Current balance: ${transaction['current_balance']:.2f}\n\n"
     
-    bot.send_message(chat_id, resposta, reply_markup=gerar_markup_inicial())
+    bot.send_message(chat_id, response, reply_markup=generate_initial_markup())
 
 if __name__ == '__main__':
-    logger.info("Bot iniciado. Pressione Ctrl+C para parar.")
+    logger.info("Bot started. Press Ctrl+C to stop.")
     bot.polling(none_stop=True)
