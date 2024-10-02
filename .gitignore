@@ -28,4 +28,5 @@ Thumbs.db
 *.swo
 
 # Arquivos específicos do seu projeto
+bot_extra.py
 # Adicione aqui quaisquer outros arquivos ou pastas que não devem ser versionados
