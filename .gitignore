@@ -1,0 +1,31 @@
+# Arquivos e pastas do Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Ambiente virtual
+.env
+.venv
+env/
+venv/
+ENV/
+
+# Arquivos de configuração
+*.ini
+config.py
+
+# Logs
+*.log
+
+# Arquivos do sistema operacional
+.DS_Store
+Thumbs.db
+
+# IDEs e editores
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Arquivos específicos do seu projeto
+# Adicione aqui quaisquer outros arquivos ou pastas que não devem ser versionados
