@@ -200,11 +200,7 @@ def confirm_deposit(message, amount):
                 'last_transaction': {
                     'type': 'deposit',
                     'amount': amount,
-                    'date': timestamp.strftime("%d/%m/%Y %H:%M:%S")
-                }
-            }
-        }
-    )
+                    'date': timestamp.strftime("%d/%m/%Y %H:%M:%S")}}})
     
     if result.modified_count > 0:
         updated_balance = previous_balance + amount
@@ -278,11 +274,7 @@ def confirm_withdrawal(message, amount):
                 'last_transaction': {
                     'type': 'withdrawal',
                     'amount': amount,
-                    'date': timestamp.strftime("%d/%m/%Y %H:%M:%S")
-                }
-            }
-        }
-    )
+                    'date': timestamp.strftime("%d/%m/%Y %H:%M:%S")}}})
     
     if result.modified_count > 0:
         updated_balance = previous_balance - amount
