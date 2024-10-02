@@ -8,18 +8,23 @@ from pymongo import MongoClient
 from pymongo.errors import ConnectionFailure
 from datetime import datetime
 import logging
+import os
+from dotenv import load_dotenv
+
+# Carrega as variáveis de ambiente do arquivo .env
+load_dotenv()
 
 # Configuração do logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 # Configuração do bot
-TOKEN = "7191121650:AAGDXIJRPyAVqXA99t6pWK0wvsbJYRN6jyo"
+TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 bot = TeleBot(TOKEN)
 
 # Configuração do MongoDB
-MONGO_URI = "mongodb://localhost:27017/"
-DB_NAME = "banco_telegram"
+MONGO_URI = os.getenv('MONGO_URI')
+DB_NAME = os.getenv('DB_NAME')
 
 # Variáveis globais para controlar o estado da conexão com o banco de dados
 db_disponivel = False
